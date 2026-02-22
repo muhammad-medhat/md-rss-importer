@@ -16,6 +16,12 @@ class MD_RSS_Importer
 
     public function init()
     {
+        add_action('init', [$this, 'register_taxonomies']);
+        // Admin columns
+        add_filter('manage_post_posts_columns', [$this, 'add_rss_source_column']);
+        add_action('manage_post_posts_custom_column', [$this, 'render_rss_source_column'], 10, 2);
+        // Admin filter
+        add_action('restrict_manage_posts', [$this, 'add_rss_source_filter']);
         // Cron job
         add_action(self::CRON_HOOK, [$this, 'import_feed']);
 
@@ -76,7 +82,6 @@ class MD_RSS_Importer
             if (empty($feed_url)) {
                 continue;
             }
-            ////////////////////
             $rss = fetch_feed($feed_url);
 
             $supports_media = $this->feed_supports_media_rss($rss);
@@ -131,6 +136,16 @@ class MD_RSS_Importer
         if (!is_wp_error($post_id)) {
             add_post_meta($post_id, 'rtp_rss_guid', $guid);
             add_post_meta($post_id, 'rtp_rss_source', esc_url_raw($item->get_permalink()));
+            $domain = $this->extract_domain($feed_url);
+            wp_set_object_terms(
+                $post_id,
+                $domain,
+                'rss_source',
+                false
+            );
+
+
+
             // 🔍 Try to extract image URL
             // $image_url = $this->get_image_url_from_item($item);
             $image_url = $this->get_image_url_from_item($item, $feed_url);
@@ -372,5 +387,85 @@ class MD_RSS_Importer
         // return ($best_score > 0) ? $best : null;
         return $best;
     }
+    private function extract_domain($feed_url)
+    {
+        $parsed = wp_parse_url($feed_url);
+
+        if (empty($parsed['host'])) {
+            return '';
+        }
+
+        return strtolower($parsed['host']);
+    }
+    public function register_taxonomies()
+    {
+        register_taxonomy(
+            'rss_source',
+            'post',
+            [
+                'label' => 'RSS Sources',
+                'public' => false,
+                'show_ui' => true,
+                'hierarchical' => false,
+                'rewrite' => false,
+            ]
+        );
+    }
+    public function add_rss_source_column($columns)
+    {
+        $columns['rss_source'] = 'RSS Source';
+        return $columns;
+    }
+    public function render_rss_source_column($column, $post_id)
+    {
+        if ($column === 'rss_source') {
+
+            $terms = get_the_terms($post_id, 'rss_source');
+
+            if (!empty($terms) && !is_wp_error($terms)) {
+                $names = wp_list_pluck($terms, 'name');
+                echo esc_html(implode(', ', $names));
+            } else {
+                echo '—';
+            }
+        }
+    }
+
+    //filter dropdown
+    public function add_rss_source_filter()
+    {
+        global $typenow;
+
+        if ($typenow !== 'post') {
+            return;
+        }
+
+        $taxonomy = 'rss_source';
+        $selected = $_GET[$taxonomy] ?? '';
+
+        $terms = get_terms([
+            'taxonomy' => $taxonomy,
+            'hide_empty' => false,
+        ]);
+
+        if (empty($terms) || is_wp_error($terms)) {
+            return;
+        }
+        echo '<label class="screen-reader-text">Filter by RSS Source</label>';
+        echo '<select name="' . esc_attr($taxonomy) . '">';
+        echo '<option value="">All RSS Sources</option>';
+
+        foreach ($terms as $term) {
+            printf(
+                '<option value="%s"%s>%s</option>',
+                esc_attr($term->slug),
+                selected($selected, $term->slug, false),
+                esc_html($term->name)
+            );
+        }
+
+        echo '</select>';
+    }
+
 
 }
