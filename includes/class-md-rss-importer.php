@@ -4,12 +4,15 @@ class MD_RSS_Importer
 {
 
     const OPTION_FEED_URL = 'rtp_feed_url';
+    const OPTION_FEED_URLS = 'rtp_feed_urls';
     const CRON_HOOK = 'rtp_cron_import';
     const OPTION_CATEGORY = 'rtp_import_category';
 
     // Define the standard "ID" for media
     const MRSS_namespace = 'http://search.yahoo.com/mrss/';
 
+    //log prefix
+    const LOG_PREFIX = '[MD_RSS] ';
 
     public function init()
     {
@@ -36,27 +39,63 @@ class MD_RSS_Importer
     {
         wp_clear_scheduled_hook(self::CRON_HOOK);
     }
+    private function feed_supports_media_rss($rss)
+    {
+        if (!method_exists($rss, 'get_namespaces')) {
+            return false;
+        }
+
+        $namespaces = $rss->get_namespaces();
+
+        if (empty($namespaces)) {
+            return false;
+        }
+
+        foreach ($namespaces as $prefix => $uri) {
+            if ($uri === self::MRSS_namespace) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public function import_feed()
     {
-        $feed_url = get_option(self::OPTION_FEED_URL);
+        $feed_urls = get_option(self::OPTION_FEED_URLS);
 
-        if (empty($feed_url)) {
+        if (empty($feed_urls) || !is_array($feed_urls)) {
             return;
         }
 
         include_once ABSPATH . WPINC . '/feed.php';
-        $rss = fetch_feed($feed_url);
+        foreach ($feed_urls as $feed_url) {
 
-        if (is_wp_error($rss)) {
-            // Optional: log error
-            return;
-        }
+            $feed_url = esc_url_raw(trim($feed_url));
 
-        $items = $rss->get_items(0, 10);
+            if (empty($feed_url)) {
+                continue;
+            }
+            ////////////////////
+            $rss = fetch_feed($feed_url);
 
-        foreach ($items as $item) {
-            $this->create_post_from_item($item, $feed_url);
+            $supports_media = $this->feed_supports_media_rss($rss);
+            if ($supports_media) {
+                error_log(self::LOG_PREFIX . 'Feed supports Media RSS');
+            } else {
+                error_log(self::LOG_PREFIX . 'Feed does NOT support Media RSS');
+            }
+
+            if (is_wp_error($rss)) {
+                // Optional: log error
+                return;
+            }
+
+            $items = $rss->get_items(0, 10);
+
+            foreach ($items as $item) {
+                $this->create_post_from_item($item, $feed_url);
+            }
         }
     }
 
@@ -104,42 +143,39 @@ class MD_RSS_Importer
 
     private function get_image_url_from_item1($item)
     {
-        $log_prefix = '[MD_RSS] ';
-
         // 1. Check <media:content>
         $media = $item->get_item_tags('', 'media:content');
         if (!empty($media[0]['attribs']['']) && !empty($media[0]['attribs']['']['url'])) {
-            error_log($log_prefix . 'Found media:content URL: ' . $media[0]['attribs']['']['url']);
+            error_log(self::LOG_PREFIX . 'Found media:content URL: ' . $media[0]['attribs']['']['url']);
             return esc_url_raw($media[0]['attribs']['']['url']);
         }
 
         // 2. Check <enclosure>
         $enclosure = $item->get_enclosure();
         if ($enclosure && $enclosure->get_thumbnail()) {
-            error_log($log_prefix . 'Found enclosure thumbnail URL: ' . $enclosure->get_thumbnail());
+            error_log(self::LOG_PREFIX . 'Found enclosure thumbnail URL: ' . $enclosure->get_thumbnail());
             return esc_url_raw($enclosure->get_thumbnail());
         }
         // 3. <media:thumbnail>
         $thumbnail = $item->get_item_tags('', 'media:thumbnail');
         if (!empty($thumbnail[0]['attribs']['']) && !empty($thumbnail[0]['attribs']['']['url'])) {
             $url = esc_url_raw($thumbnail[0]['attribs']['']['url']);
-            error_log($log_prefix . 'Found media:thumbnail URL: ' . $url);
+            error_log(self::LOG_PREFIX . 'Found media:thumbnail URL: ' . $url);
             return $url;
         }
 
         // 4. Try to parse first image from content
         if (preg_match('/<img.*?src=["\'](.*?)["\']/', $item->get_content(), $matches)) {
-            error_log($log_prefix . 'Found img in content: ' . $matches[1]);
+            error_log(self::LOG_PREFIX . 'Found img in content: ' . $matches[1]);
             return esc_url_raw($matches[1]);
         }
 
-        error_log($log_prefix . 'No image found in feed item.');
+        error_log(self::LOG_PREFIX . 'No image found in feed item.');
         return false;
     }
     private function get_image_url_from_item($item, $feed_url = '')
     {
 
-        $log_prefix = '[MD_RSS] ';
         $images = $this->collect_images_from_item($item, $feed_url);
 
         if (empty($images)) {
@@ -165,20 +201,22 @@ class MD_RSS_Importer
             set_post_thumbnail($post_id, $image_id);
         }
     }
-    private function collect_images_from_item($item, $feed_url)
+    private function collect_images_from_item($item, $feed_url, $supports_media = true)
     {
         $images = [];
-        $log_prefix = '[MD_RSS] ';
+        // self::LOG_PREFIX = '[MD_RSS] ';
 
         // 1️⃣ media:content
         // it is because yahoo made this rss spec
         //  This specific URL is the standard identifier 
         //  for Media RSS. When you see a tag in a feed 
         //  like <media:content>, the media prefix refers to this URL.
+
         $media = $item->get_item_tags(
             self::MRSS_namespace,
             'content'
         );
+
 
         if (!empty($media)) {
             foreach ($media as $m) {
@@ -194,7 +232,7 @@ class MD_RSS_Importer
                     'source' => 'media:content',
                 ];
             }
-            error_log($log_prefix . 'Found media:content URL: ' . $media[0]['attribs']['']['url']);
+            error_log(self::LOG_PREFIX . 'Found media:content URL: ' . $media[0]['attribs']['']['url']);
         }
 
         // 2️⃣ media:thumbnail
@@ -217,7 +255,7 @@ class MD_RSS_Importer
                     'source' => 'media:thumbnail',
                 ];
             }
-            error_log($log_prefix . 'Found media:thumbnail URL: ' . $thumbs[0]['attribs']['']['url']);
+            error_log(self::LOG_PREFIX . 'Found media:thumbnail URL: ' . $thumbs[0]['attribs']['']['url']);
         }
 
         // 3️⃣ enclosure
@@ -232,7 +270,7 @@ class MD_RSS_Importer
                 'type' => $type,
                 'source' => 'enclosure',
             ];
-            error_log($log_prefix . 'Found enclosure thumbnail URL: ' . $enclosure->get_thumbnail());
+            error_log(self::LOG_PREFIX . 'Found enclosure thumbnail URL: ' . $enclosure->get_thumbnail());
 
         }
 
@@ -245,13 +283,14 @@ class MD_RSS_Importer
                 'type' => '',
                 'source' => 'content',
             ];
-            error_log($log_prefix . 'Found content image URL: ' . $m[1]);
+            error_log(self::LOG_PREFIX . 'Found content image URL: ' . $m[1]);
         }
         if (empty($images)) {
-            error_log($log_prefix . 'No images found in feed item.');
+            error_log(self::LOG_PREFIX . 'No images found in feed item.');
         }
 
         return $images;
+
     }
     private function normalize_url($url, $feed_url)
     {
