@@ -5,7 +5,9 @@ class MD_RSS_Importer_Admin
 
     public static function register_settings()
     {
-        register_setting('rtp_settings', 'rtp_feed_url', 'esc_url_raw');
+        register_setting('rtp_settings', MD_RSS_Importer::OPTION_FEED_URL, 'esc_url_raw');
+        register_setting('rtp_settings', MD_RSS_Importer::OPTION_CATEGORY);
+
     }
 
     public static function add_settings_page()
@@ -35,15 +37,37 @@ class MD_RSS_Importer_Admin
         <?php
                 settings_fields('rtp_settings');
                 do_settings_sections('rtp_settings');
+
+                $selected_category = get_option(MD_RSS_Importer::OPTION_CATEGORY);
+                $categories = get_categories(['hide_empty' => false]);
                 ?>
         <table class="form-table">
             <tr>
                 <th scope="row">RSS Feed URL</th>
                 <td>
-                    <input type="url" name="rtp_feed_url" value="<?php echo esc_attr(get_option('rtp_feed_url')); ?>"
+                    <input type="url" name="<?php echo esc_attr(MD_RSS_Importer::OPTION_FEED_URL); ?>"
+                        value="<?php echo esc_attr(get_option(MD_RSS_Importer::OPTION_FEED_URL)); ?>"
                         class="regular-text" required>
                 </td>
             </tr>
+            <tr>
+                <th scope="row">Import Category</th>
+                <td>
+                    <select name="<?php echo esc_attr(MD_RSS_Importer::OPTION_CATEGORY); ?>">
+                        <option value="">— Select Category —</option>
+                        <?php foreach ($categories as $cat): ?>
+                        <option value="<?php echo esc_attr($cat->term_id); ?>"
+                            <?php selected($selected_category, $cat->term_id); ?>>
+                            <?php echo esc_html($cat->name);
+                                        ?>
+                            <!-- <option value="<?php echo esc_attr($cat->term_id); ?>">
+                            <?php echo $cat->name ?>
+                        </option> -->
+                            <?php endforeach; ?>
+                    </select>
+                </td>
+            </tr>
+
         </table>
         <?php submit_button(); ?>
     </form>
